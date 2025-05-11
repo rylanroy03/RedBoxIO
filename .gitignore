@@ -1,0 +1,5 @@
+build/
+.vscode/
+
+# MUST be ignored due to licensing. Do NOT let this push.
+external/
