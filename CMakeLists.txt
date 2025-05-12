@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 project(CustomMixer)
 
+# We have to define this or else ASIOSampleRate will not be defined as a double
+add_definitions(-DIEEE754_64FLOAT)
+
 set(CMAKE_CXX_STANDARD 17)
 
 # Tell the compiler where to find asio.h and friends
