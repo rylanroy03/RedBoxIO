@@ -4,3 +4,4 @@ build/
 # MUST be ignored due to licensing. Do NOT let contents push except for the README.
 external/*
 !external/README-SDK.md
+CustomMixer.code-workspace
