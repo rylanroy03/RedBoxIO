@@ -4,10 +4,15 @@
 #include "asiodrivers.h"
 #include <windows.h>
 #define DEBUG_MODE 0
+#include <atomic>
+#include <cmath>
 
 static AsioDrivers* asioDrivers = nullptr;
 ASIOBufferInfo* g_buffers = nullptr;
 long g_bufferSize = 0;
+static double g_sampleRate = 48000.0;
+static const double g_lfoRateHz = 4.0;
+static double g_phase = 0.0;
 
 ASIOTime* bufferSwitchTimeInfo(ASIOTime* timeInfo, long bufferIndex, ASIOBool processNow) {
     float* input = static_cast<float*>(g_buffers[0].buffers[bufferIndex]); // MONO input, channel 0
@@ -125,10 +130,19 @@ int main() {
     } else {
         std::cerr << "ASIOInit failed.\n";
     }
-    ASIOSampleRate desiredRate = 48000.0;
-    if (ASIOSetSampleRate(desiredRate) != ASE_OK) {
-        std::cerr << "ASIOSetSampleRate failed." << std::endl;
+
+    // This new section will query the sample rate of the Focusrite
+    ASIOSampleRate currentRate;
+    if (ASIOGetSampleRate(&currentRate) == ASE_OK) {
+        g_sampleRate = currentRate;
+        std::cout << "Detected sample rate: " << g_sampleRate << " Hz\n";
+    } else {
+        std::cerr << "Warning: using fallback sample rate of 48000.0 Hz\n";
+        g_sampleRate = 48000.0;
     }
+
+
+
 
     // Yes, this is techinically debug info, but useful for development...
     long minSize, maxSize, preferredSize, granularity;
