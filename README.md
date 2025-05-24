@@ -52,7 +52,7 @@ cmake --build build --config Release
 ### 2. Focusrite Control + USB ASIO Driver
 
 > ⚠️ **Compatibility Warning:**  
->This project has **only** been tested with the Focusrite Scarlett Solo 3rd Gen.  
+>This project has **only** been tested with the 3rd Gen Focusrite Scarlett Solo and 2i2.  
 > Compatibility with other Focusrite models is **not guaranteed**.  
 > I am not aware of driver-level differences between models, and I cannot currently devote the time or resources to investigating broader compatibility.
 
