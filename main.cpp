@@ -3,115 +3,74 @@
 #include "asio.h"
 #include "asiodrivers.h"
 #include <windows.h>
-#define DEBUG_MODE 0
-#include <atomic>
 #include <cmath>
 
 static AsioDrivers* asioDrivers = nullptr;
 ASIOBufferInfo* g_buffers = nullptr;
 long g_bufferSize = 0;
 static double g_sampleRate = 48000.0;
-static const double g_lfoRateHz = 4.0;
-static double g_phase = 0.0;
 
+/* NOTE REGARDING AUDIO BUFFER STRUCTURE:
+Audio from the Focusrite is 24-bit packed into 32-bit words. The driver delivers
+32-bit words where only bits [8-31] are valid audio. The 8 LSB bits are zeroed padding.
+In the bufferswitch function, this array is decoded by bit shift, division and sign-extension.
+When returned to the driver, the audio is re-encoded into 32-bit integer form.
+It took me too long to figure this shit out so hopefully this is helpful. :) 
+*/
 ASIOTime* bufferSwitchTimeInfo(ASIOTime* timeInfo, long bufferIndex, ASIOBool processNow) {
-    float* input = static_cast<float*>(g_buffers[0].buffers[bufferIndex]); // MONO input, channel 0
-    float* outputL = static_cast<float*>(g_buffers[1].buffers[bufferIndex]); // MONO left out
-    float* outputR = static_cast<float*>(g_buffers[2].buffers[bufferIndex]); // MONO right out
+    int32_t* input = static_cast<int32_t*>(g_buffers[0].buffers[bufferIndex]);   // MONO input, 24-bit packed
+    int32_t* outputL = static_cast<int32_t*>(g_buffers[1].buffers[bufferIndex]); // Left output
+    int32_t* outputR = static_cast<int32_t*>(g_buffers[2].buffers[bufferIndex]); // Right output
 
-    if (!input || !outputL || !outputR) return nullptr; // error-catch bailout
-    // Very simple passthrough. Copies input to left and right output.
+    if (!input || !outputL || !outputR) return nullptr; // error-catch bail out
+
     for (long i = 0; i < g_bufferSize; ++i) {
-        outputL[i] = input[i]; // L in->out
-        outputR[i] = input[i];  // R in->out
+        int32_t raw = input[i] >> 8;    // Shift right to remove padding
+        if (raw & 0x800000) raw |= ~0xFFFFFF;   // sign-extend negatives (0xFF padding to 24-31)
+        float sample = static_cast<float>(raw) / 8388608.0f;    // Normalizing to float with range [-1.0, 1.0]
 
+        // Future processing hook for routing to external DSP pipeline.
+        float output = sample;  // e.g., applyGain(sample), tremolo(sample), etc.
+        
+        int32_t encoded = static_cast<int32_t>(output * 8388608.0f) << 8;   // This recasts for output
+        outputL[i] = encoded;
+        outputR[i] = encoded;
     }
+
     return nullptr;
 }
 
 
-
-// Turns out we have to emulate a DAW just to initialize the ASIO driver and establish a stream.
-// The debug section can be safely ignored but is useful for development.
-#if DEBUG_MODE
-long asioMessage(long selector, long value, void* message, double* opt) {
-    std::cout << "[asioMessage] selector: " << selector 
-              << ", value: " << value 
-              << ", message: " << (message ? "(non-null)" : "null") 
-              << ", opt: " << (opt ? *opt : 0.0) << "\n";
-
-    switch (selector) {
-        case 1: std::cout << "  -> kAsioSelector\n"; break;
-        case 2: std::cout << "  -> kAsioEngineVersion\n"; return 2;
-        case 3: std::cout << "  -> kAsioSupportsInputMonitor\n"; return 0;
-        case 4: std::cout << "  -> kAsioResetRequest\n"; return 1;
-        case 5: std::cout << "  -> kAsioBufferSizeChange\n"; return 1;
-        case 6: std::cout << "  -> kAsioResyncRequest\n"; return 1;
-        case 7: std::cout << "  -> kAsioLatenciesChanged\n"; return 1;
-        case 8: std::cout << "  -> kAsioSupportsTimeInfo\n"; return 1;
-        case 9: std::cout << "  -> kAsioSupportsTimeCode\n"; return 0;
-        default: std::cout << "  -> Unknown selector\n";
-    }
-    return 0;
-}
-#else
+/* ASIOMESSAGE HANDLER:
+This function is a required callback for the ASIO driver to communicate with the host application.
+It handles driver-specific messages as described in the switch cases below. These are acknowledged
+with simple return values to keep the driver happy. In a full DAW this function would manage more 
+detailed driver integration, but that is not necessary for this program (for now...).
+My implementation is dumb but quick and it works.
+*/
 long asioMessage(long selector, long value, void* message, double* opt) {
     switch (selector) {
-        case 2: return 2;
-        case 3: return 0;
-        case 4: return 1;
-        case 5: return 1;
-        case 6: return 1;
-        case 7: return 1;
-        case 8: return 1;
-        case 9: return 0;
+        case 2: return 2; // kAsioEngineVersion
+        case 3: return 0; // kAsioSupportsInputMonitor
+        case 4: return 1; // kAsioResetRequest
+        case 5: return 1; // kAsioBufferSizeChange
+        case 6: return 1; // kAsioResyncRequest
+        case 7: return 1; // kAsioLatenciesChanged
+        case 8: return 1; // kAsioSupportsTimeInfo
+        case 9: return 0; // kAsioSupportsTimeCode
         default: return 0;
     }
 }
-#endif
 
-/* ###########
-Main code loop
-########### */
+
+/* MAIN FUNCTION:
+This function initializes the ASIO driver, sets up the input/output buffers, 
+and starts the real-time audio stream. It currently uses a hardcoded target (Focusrite USB ASIO), 
+retrieves sample rate, buffer format, and enters a passthrough loop using the bufferSwitchTimeInfo callback.
+Execution blocks until the user presses ENTER, at which point the driver is stopped and cleaned up.
+*/
 
 int main() {
-
-    /* This section is dedicated to debugging present channels */
-    #if DEBUG_MODE
-    long numInputs = 0;
-    long numOutputs = 0;
-    // This should scan the channels for input/output
-    if (ASIOGetChannels(&numInputs, &numOutputs) == ASE_OK) {
-    std::cout << "Input channels: " << numInputs << std::endl;
-    std::cout << "Output channels: " << numOutputs << std::endl;
-    } else {
-    std::cerr << "Failed to get ASIO channel information." << std::endl;
-    }
-
-    ASIOChannelInfo chInfo = {};
-
-    std::cout << "\n--- Input Channels ---\n";
-    for (long i = 0; i < numInputs; ++i) {
-        chInfo.channel = i;
-        chInfo.isInput = ASIOTrue;
-        if (ASIOGetChannelInfo(&chInfo) == ASE_OK) {
-            std::cout << "[" << i << "] Input: " << chInfo.name << std::endl;
-        } else {
-            std::cerr << "Failed to get info for input channel " << i << std::endl;
-        }
-    }
-
-    std::cout << "\n--- Output Channels ---\n";
-    for (long i = 0; i < numOutputs; ++i) {
-        chInfo.channel = i;
-        chInfo.isInput = ASIOFalse;
-        if (ASIOGetChannelInfo(&chInfo) == ASE_OK) {
-            std::cout << "[" << i << "] Output: " << chInfo.name << std::endl;
-        } else {
-            std::cerr << "Failed to get info for output channel " << i << std::endl;
-        }
-    }
-    #endif
 
     asioDrivers = new AsioDrivers();
     char targetDriver[] = "Focusrite USB ASIO";
@@ -122,39 +81,41 @@ int main() {
         return 1;
     }
 
-    ASIODriverInfo info = {}; // This initializes the ASIO struct
+    ASIODriverInfo info = {};
     info.asioVersion = 2;
 
-    if (ASIOInit(&info) == ASE_OK) { // Checks ASIO struct status (ASE_OK=0)
-        std::cout << "Successfully initialized ASIO driver: " << info.name << "\n";
-    } else {
+    if (ASIOInit(&info) != ASE_OK) {
         std::cerr << "ASIOInit failed.\n";
+        delete asioDrivers;
+        return 1;
     }
 
-    // This new section will query the sample rate of the Focusrite
+    std::cout << "Successfully initialized ASIO driver: " << info.name << "\n";
+    
+    // This section queries sample rate
     ASIOSampleRate currentRate;
     if (ASIOGetSampleRate(&currentRate) == ASE_OK) {
         g_sampleRate = currentRate;
-        std::cout << "Detected sample rate: " << g_sampleRate << " Hz\n";
+        std::cout << "Sample rate: " << g_sampleRate;
     } else {
-        std::cerr << "Warning: using fallback sample rate of 48000.0 Hz\n";
+        std::cerr << "WARN: Using fallback sample rate of 48 kHz\n";
         g_sampleRate = 48000.0;
     }
 
-
-
-
-    // Yes, this is techinically debug info, but useful for development...
+    // ASIOGetBufferSize is now written to break loop if buffer range is unreported or invalid.
     long minSize, maxSize, preferredSize, granularity;
-    if (ASIOGetBufferSize(&minSize, &maxSize, &preferredSize, &granularity) == ASE_OK) {
-        std::cout << "Buffer size range: " << minSize << " to " << maxSize << std::endl;
-        std::cout << "Preferred size: " << preferredSize << std::endl; // ...and currently queries device preferredSize.
-        std::cout << "Granularity: " << granularity << std::endl;
-    } else {
-        std::cerr << "Failed to query buffer size range." << std::endl;
+    if (ASIOGetBufferSize(&minSize, &maxSize, &preferredSize, &granularity) != ASE_OK) {
+        std::cerr << "Failed to query buffer size range.\n";
+        ASIOExit();
+        delete asioDrivers;
+        return 1;
     }
+
+    std::cout << "Buffer size range: " << minSize << " to " << maxSize << "\n";
+    std::cout << "Preferred size: " << preferredSize << "\n";
     
-    // Here we're defining the channel to be used. Plan to implement channel selection later.
+    // Here we're defining the channel to be used.
+    // The plan is to implement channel selection later.
     ASIOBufferInfo bufferInfos[3] = { 
         { ASIOTrue,  0, nullptr },  
         { ASIOFalse, 0, nullptr },
@@ -165,14 +126,12 @@ int main() {
     g_bufferSize = preferredSize;
 
     ASIOCallbacks callbacks = {
-        nullptr,
-        nullptr,
-        asioMessage,    // message handler to wake up the interface
-        bufferSwitchTimeInfo // active buffer callback
+        nullptr,                // deprecated bufferSwitch
+        nullptr,                // sampleRateDidChange
+        asioMessage,            // message handler to wake up the interface
+        bufferSwitchTimeInfo    // active buffer callback
     };
 
-
-    // Initializes the buffers used in 
     if (ASIOCreateBuffers(bufferInfos, 3, preferredSize, &callbacks) != ASE_OK) {
         std::cerr << "Failed to create ASIO buffers." << std::endl;
         ASIOExit();
@@ -194,7 +153,7 @@ int main() {
 
     ASIOStop();
     ASIODisposeBuffers();
-    ASIOExit(); // Always cleanup
+    ASIOExit();
     delete asioDrivers;
     return 0;
 }
