@@ -15,9 +15,9 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include <iostream>
-#define IEEE754_64FLOAT 1
 #include "asio.h"
 #include "asiodrivers.h"
+#include "AsioInit.h"
 #include <windows.h>
 #include <cmath>
 
@@ -84,38 +84,15 @@ This function initializes the ASIO driver, sets up the input/output buffers,
 and starts the real-time audio stream. It currently uses a hardcoded target (Focusrite USB ASIO), 
 retrieves sample rate, buffer format, and enters a passthrough loop using the bufferSwitchTimeInfo callback.
 Execution blocks until the user presses ENTER, at which point the driver is stopped and cleaned up.
+
+    This section is currently being refactored into header/cpp files for better organization.
 */
 
 int main() {
 
-    asioDrivers = new AsioDrivers();
-    char targetDriver[] = "Focusrite USB ASIO";
-
-    if (!asioDrivers->loadDriver(targetDriver)) {
-        std::cerr << "Failed to load ASIO driver: " << targetDriver << "\n";
-        delete asioDrivers;
+    // 
+    if(!initializeAsioDriver("Focusrite USB ASIO", g_sampleRate)) {
         return 1;
-    }
-
-    ASIODriverInfo info = {};
-    info.asioVersion = 2;
-
-    if (ASIOInit(&info) != ASE_OK) {
-        std::cerr << "ASIOInit failed.\n";
-        delete asioDrivers;
-        return 1;
-    }
-
-    std::cout << "Successfully initialized ASIO driver: " << info.name << "\n";
-    
-    // This section queries sample rate
-    ASIOSampleRate currentRate;
-    if (ASIOGetSampleRate(&currentRate) == ASE_OK) {
-        g_sampleRate = currentRate;
-        std::cout << "Sample rate: " << g_sampleRate;
-    } else {
-        std::cerr << "WARN: Using fallback sample rate of 48 kHz\n";
-        g_sampleRate = 48000.0;
     }
 
     // ASIOGetBufferSize is now written to break loop if buffer range is unreported or invalid.

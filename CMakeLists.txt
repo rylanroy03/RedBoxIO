@@ -12,11 +12,18 @@ include_directories("external")
 # TELL CMAKE TO SHUT UP ABOUT THE STRCPY WARNING
 add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 
+# This tells Cmake to ignore size_t warnings because we use 64 bit now and the world is healing
+set_source_files_properties(
+    external/asiolist.cpp
+    PROPERTIES COMPILE_FLAGS "/wd4267"
+)
+
 # Source files to compile
 set(ASIO_SRC
     "external/asio.cpp"
     "external/asiodrivers.cpp"
     "external/asiolist.cpp"
+    "AsioInit.cpp"
 )
 
 # Main app
