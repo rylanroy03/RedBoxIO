@@ -17,7 +17,18 @@ Ultimately, planned RedBoxIO functionality includes:
 - Simple preset and routing scene management
 
 
----
+
+## License
+RedBoxIO is a community-protective, open-core project. Its engine and audio routing components are AGPL-licensed to prevent closed forks and maintain shared progress. A separate proprietary GUI and premium modules may be offered in the future as part of a hybrid licensing model.
+
+This project is licensed under the [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html).
+
+This license guarantees your freedom to use, study, modify, and share this software, provided that:
+- All changes remain open and AGPL-compatible
+- Hosted or distributed versions include source code access
+
+For proprietary use or commercial licensing, please contact rylanroy03@outlook.com.
+
 ## Required Dependencies: Steinberg ASIO SDK & Focusrite Control
 
 **Due to licensing restrictions, the ASIO SDK and Focusrite Control DLLs are not included in this repository.**
@@ -41,12 +52,16 @@ After downloading the SDK:
     - asiosys.h
     - ginclude.h
     - iasiodrv.h
-3. Once these files are in place, you can build the project using CMake:
+3. Once these files are in place, you can build the project using CMake (or just run the batch file provided):
 
 ```bash
+# Run in order:
 rm -r build
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -A x64
 cmake --build build --config Release
+
+# Alternatively:
+.\build.bat
 ```
 
 ### 2. Focusrite Control + USB ASIO Driver
